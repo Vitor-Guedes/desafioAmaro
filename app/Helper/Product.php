@@ -3,8 +3,9 @@
 namespace App\Helper;
 
 use Exception;
+use PhpAmqpLib\Connection\AMQPStreamConnection;
+use PhpAmqpLib\Message\AMQPMessage;
 use Slim\Psr7\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Psr\Container\ContainerInterface;
 
 class Product
@@ -12,6 +13,8 @@ class Product
     protected $_container;
 
     protected $_db;
+
+    protected $_rabbitConnection;
 
     public function __construct(ContainerInterface $container)
     {
@@ -84,6 +87,11 @@ class Product
         try {
             $this->_db::beginTransaction();
 
+            if (isset($products['name'])) {
+                $_products[] = $products;
+                $products = $_products;
+            }
+
             foreach ($products as $product) {
                 $tags = $product['tags'];
                 if (isset($tags['element'])) {
@@ -116,7 +124,7 @@ class Product
     public function insertTags($tags)
     {
         foreach ($tags as $tag) {
-            $this->_db->table('tag')->insertOrIgnore([
+            $this->_db->table('tag')->updateOrInsert([
                 'label' => $tag
             ]);
         }
@@ -134,5 +142,92 @@ class Product
                 'tag_id' => $tag->id
             ]);
         }
+    }
+
+    public function sendToQueue($products)
+    {
+        $queueName = 'queue_product';
+        $channel = $this->getConnection()->channel();
+        $channel->queue_declare($queueName, false, true, false, false);
+
+        foreach ($products as $product) {
+            $tags = $product['tags'];
+            if (isset($tags['element'])) {
+                $tags = $tags['element'];
+                $product['tags'] = [];
+                $product['tags'] = $tags;
+            }
+
+            $data = json_encode($product);
+            
+            $message = new AMQPMessage($data, [
+                'delivery_mode' => AMQPMessage::DELIVERY_MODE_NON_PERSISTENT
+            ]);
+
+            $channel->basic_publish($message, '', $queueName);
+        }
+
+        $channel->close();
+        $this->getConnection()->close();
+
+        echo "ok!";
+    }
+
+    public function getConnection()
+    {
+        if (!$this->_rabbitConnection) {
+            $settingsRabbit = $this->_container->get('settings')['rabbitmq'];
+            $host = $settingsRabbit['host'];
+            $port = $settingsRabbit['port'];
+            $user = $settingsRabbit['user'];
+            $pass = $settingsRabbit['pass'];
+            $this->_rabbitConnection = new AMQPStreamConnection($host, $port, $user, $pass);
+        }
+        return $this->_rabbitConnection;
+    }
+
+    public function consumeQueue($output)
+    {
+        $queueName = 'queue_product';
+        $channel = $this->getConnection()->channel();
+        $channel->queue_declare($queueName, false, true, false, false);
+
+        $proccess = function ($message) use ($output) {
+            try {
+                $this->_db::beginTransaction();
+                $product = json_decode($message->body, true);
+
+                $tags = $product['tags'];
+                if (isset($tags['element'])) {
+                    $tags = $tags['element'];
+                }
+
+                unset($product['tags']);
+
+                $this->insertProduct($product);
+                $this->insertTags($tags);
+
+                $insertedProduct = $this->_db->table('product')->where('name', $product['name'])->first();
+
+                $this->insertTagsProduct($tags, $insertedProduct->id);
+                $this->_db::commit();
+                $output->writeln($message->body . " - Product Add Successful!");
+
+                $message->ack();
+            } catch (Exception $e) {
+                $output->writeln($e->getMessage());
+                $this->_db::rollBack();
+            }
+        };
+
+        $channel->basic_qos(null, 2, null);
+        $channel->basic_consume($queueName, '', false, false, false, false, $proccess);
+
+        while ($channel->is_open()) {
+            $channel->wait();
+        }
+
+        $channel->close();
+        $this->getConnection()->close();        
     }
 }

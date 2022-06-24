@@ -21,7 +21,6 @@ AppFactory::setContainer($container);
 $app = AppFactory::create();
 
 $app->get('/', function (Request $request, Response $response, $args) {
-    // phpinfo();
     return $this->get('view')->render($response, "index.phtml", $args);
 });
 
@@ -40,7 +39,8 @@ $app->post('/insert', function (Request $request, Response $response, $args) {
 
     $list = $helper->getArrayContent($registerFile);
     $products = array_shift($list);
-    $helper->insertProducts($products);
+    // $helper->insertProducts($products);
+    $helper->sendToQueue($products);
 
     return $response;
 });
@@ -55,10 +55,13 @@ $app->get('/products', function (Request $request, Response $response, $args) {
     $_products = [];
     foreach ($products as $product) {
         if (isset($_products[$product->product_id])) {
-            $_products[$product->product_id]['tags'][$product->tag_id] = [
-                'id' => $product->tag_id,
-                'label' => $product->label
-            ];
+           
+            if (!isset($_products[$product->product_id]['tags'][$product->tag_id])) {
+                $_products[$product->product_id]['tags'][$product->tag_id] = [
+                    'id' => $product->tag_id,
+                    'label' => $product->label
+                ];
+            }
 
             continue ;
         }

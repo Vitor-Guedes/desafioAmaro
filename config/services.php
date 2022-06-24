@@ -2,6 +2,7 @@
 
 use Slim\Views\PhpRenderer;
 use \Illuminate\Database\Capsule\Manager;
+use PhpAmqpLib\Connection\AMQPStreamConnection;
 
 $container->set('view', function () {
     return new PhpRenderer(BASEDIR_VIEW);
@@ -24,7 +25,11 @@ $container->set('settings', function () {
             ]
         ],
         'rabbitmq' => [
-
+            'host' => '198.22.1.4',
+            'port' => '5672',
+            // 'port' => '15672',
+            'user' => 'guest',
+            'pass' => 'guest'
         ]
     ];
 });
