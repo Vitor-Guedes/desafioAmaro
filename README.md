@@ -1,3 +1,1 @@
 # DesafioAmaro
-
-Não COMITAR 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
